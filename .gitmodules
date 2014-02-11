@@ -1,0 +1,8 @@
+[submodule "styles/original"]
+	path = styles/original
+	url = https://github.com/citation-style-language/styles.git
+	branch = master
+[submodule "styles/distribution"]
+	path = styles/distribution
+	url = https://github.com/citation-style-language/styles-distribution.git
+	branch = master
