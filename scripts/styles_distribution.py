@@ -1,175 +1,217 @@
 #!/usr/bin/python
 
-import argparse
-import dateutil.parser
-import fcntl
-import glob
+from __future__ import print_function
+import sys
 import os
 import re
+import argparse
+import fcntl
 import subprocess
-import sys
+import dateutil.parser
+import pytz
 
-SKIP_FILES = ['.rspec', '.travis.yml', 'Gemfile', 'Gemfile.lock', 'Rakefile']
-SKIP_DIRECTORIES = ['spec', '.git']
+def git_cmd(root, params):
+    return ["git", "-C", root] + params
 
-def execute_subprocess(options):
-    return subprocess.Popen(options, stdout=subprocess.PIPE).communicate()[0]
-
-def get_change_from_file(file_path):
-    """ This function is not used because it's too slow. It spawns
-        a new git process which takes too long if you need to do it
-        thousands of times
-    """
-    string_date = execute_subprocess(["git", "log", "-n1", "--format=%ci"])
-    string_date = string_date.rstrip("\n")
-    date = dateutil.parser.parse(string_date)
-    return date.isoformat()
-
-def update_file(style_path, files_to_change):
-    style_path = style_path[2:] # TODO: 2: because contains ./
-    file = open(style_path).read()
-
-    if style_path.endswith('.csl'):
-        updated = files_to_change[style_path]
-
-        file = re.sub('<updated>.*</updated>', '<updated>%s</updated>' % updated, file)
-
-    return file
+def execute_subprocess(options, print_stdout=False):
+    p = subprocess.Popen(options, stdout=subprocess.PIPE)
+    output = p.communicate()
+    if print_stdout and output[0]:
+        print(output[0].rstrip())
+    if p.returncode != 0:
+        raise Exception("Error running process")
+    return output[0]
 
 def write_readme_md():
-    text = """CSL Style distribution
+    text = """CSL Styles Distribution
 ======================
 
-This repository is a copy of [github.com/citation-style-language/styles](https://github.com/citation-style-language/styles), refreshed twice a day, with the <updated> tag changed up to the last git change for a certain file.
+This repository is a copy of [citation-style-language/styles](https://github.com/citation-style-language/styles), refreshed on every commit, with each file's &lt;updated&gt; timestamp set to the file's last git commit time.
 
 Licensing
 ---------
-Please refer to [github.com/citation-style-language/styles](https://github.com/citation-style-language/styles)
+Please refer to https://github.com/citation-style-language/styles.
 """
 
-    file = open("README.md", "w")
-    file.write(text)
-    file.close()
+    with open(os.path.join(DISTRIBUTION_STYLES_DIRECTORY, "README.md"), "w") as f:
+        f.write(text)
 
-def write_new_style(path, updated_style):
-    file = open(os.path.join(DISTRIBUTION_STYLES_DIRECTORY, path), 'w')
-
-    file.write(updated_style)
-
-def original_last_commit():
-    """ Returns de last commit of the ORIGINAL_STYLES_DIRECTORY. """
-    last_dir = os.getcwd()
-
-    os.chdir(ORIGINAL_STYLES_DIRECTORY)
-
-    last_commit = execute_subprocess(["git", "log", "-n1", "--format=%H"])
-
-    os.chdir(last_dir)
-
-    return last_commit
-
-def copy_and_update_styles(files_to_change):
-    for root, subDirectories, files in os.walk("."):
-        for file in files:
-            if file not in SKIP_FILES and root[2:].split('/')[0]  not in SKIP_DIRECTORIES:
-                path = os.path.join(root, file)
-                updated_file = update_file(path, files_to_change)
-
-                write_new_style(path, updated_file)
+def last_commit_hash():
+    """ Returns the last commit of the ORIGINAL_STYLES_DIRECTORY. """
+    return execute_subprocess(git_cmd(ORIGINAL_STYLES_DIRECTORY, [
+        "log",
+        "-n1",
+        "--format=%H",
+        ORIGINAL_STYLES_DIRECTORY
+    ]))
 
 def count_styles_git_index(directory):
     count = 0
-    last_dir = os.getcwd()
-
-    os.chdir(directory)
-
-    files = execute_subprocess(["git", "ls-files"])
-
-    for file in files.split("\n"):
-        if file.endswith('.csl'):
+    files = execute_subprocess(git_cmd(directory, ["ls-files"]))
+    for filename in files.split("\n"):
+        if filename.endswith('.csl'):
             count += 1
-
-    os.chdir(last_dir)
-
     return count
 
-def delete_styles():
-    styles = glob.glob(DISTRIBUTION_STYLES_DIRECTORY + "/*.csl")
-    dependent_styles = glob.glob(DISTRIBUTION_STYLES_DIRECTORY + "/dependent/*.csl")
+def get_file_commit_time(root, rel_file_path):
+    string_date = execute_subprocess(git_cmd(root, [
+        "log",
+        "-n1",
+        "--format=%ci",
+        os.path.join(root, rel_file_path)
+    ]))
+    string_date = string_date.rstrip("\n")
+    # Always store dates as UTC rather than the committer's TZ
+    date = dateutil.parser.parse(string_date)
+    return date.astimezone(pytz.timezone('UTC')).isoformat()
 
-    for style in styles + dependent_styles:
-        os.unlink(style)
+def process_files():
+    print("Processing files")
 
-def prepare_files_to_change():
-    last_dir = os.getcwd()
+    files_to_keep = []
+    num_added = 0
+    num_updated = 0
+    num_skipped = 0
 
-    files_to_change = {}
+    try:
+        os.mkdir(os.path.join(DISTRIBUTION_STYLES_DIRECTORY, "dependent"))
+    except OSError:
+        pass
 
-    os.chdir(ORIGINAL_STYLES_DIRECTORY)
+    for root, dirs, files in os.walk(ORIGINAL_STYLES_DIRECTORY):
+        for filename in files:
+            # Skip directories other than root and 'dependent'
+            if (root != ORIGINAL_STYLES_DIRECTORY and
+                    root != os.path.join(ORIGINAL_STYLES_DIRECTORY, 'dependent')):
+                continue
 
-    log = execute_subprocess(["git", "log", "--pretty=Date:%ai", "--name-only"])
+            # Skip non-CSL files
+            if not filename.endswith('.csl'):
+                continue
 
-    last_date = ""
-    for line in log.split("\n"):
-        if line.startswith("Date:"):
-            last_date = dateutil.parser.parse(line[len('Date:'):]).isoformat()
-        elif line.endswith('.csl'):
-            if files_to_change.has_key(line):
-                if last_date > files_to_change[line]:
-                    files_to_change[line] = last_date
-            else:
-                files_to_change[line] = last_date
+            orig_abs_path = os.path.join(root, filename)
+            rel_path = os.path.relpath(orig_abs_path, ORIGINAL_STYLES_DIRECTORY)
+            dist_abs_path = os.path.join(DISTRIBUTION_STYLES_DIRECTORY, rel_path)
 
-    os.chdir(last_dir)
+            with open(orig_abs_path) as f:
+                orig_style = f.read()
+            try:
+                with open(dist_abs_path) as f:
+                    dist_style = f.read()
+            except IOError:
+                dist_style = False
+                print("Adding {0}".format(rel_path))
+                num_added += 1
 
-    return files_to_change
-    
+            pattern = r'<updated>[^<]*</updated>'
+
+            # If distribution file already exists, see if it differs from
+            # original, ignoring the update time
+            if dist_style:
+                orig_style_clean = re.sub(pattern, '<updated></updated>', orig_style)
+                dist_style_clean = re.sub(pattern, '<updated></updated>', dist_style)
+
+                if orig_style_clean == dist_style_clean:
+                    #print("Skipping {0}".format(rel_path))
+                    files_to_keep.append(rel_path)
+                    num_skipped += 1
+                    continue
+
+                print("Updating {0}".format(rel_path))
+                num_updated += 1
+
+            # Write the style to the distribution directory with the last
+            # commit time as the updated timestamp
+            updated = get_file_commit_time(ORIGINAL_STYLES_DIRECTORY, rel_path)
+            dist_style = re.sub(pattern, '<updated>{0}</updated>'.format(updated), orig_style)
+            with open(dist_abs_path, 'w') as f:
+                f.write(dist_style)
+
+            files_to_keep.append(rel_path)
+
+    return {
+        "files_to_keep": files_to_keep,
+        "num_added": num_added,
+        "num_updated": num_updated,
+        "num_skipped": num_skipped
+    }
+
+def prune_distribution_files(files_to_keep):
+    count = 0
+    for root, dirs, files in os.walk(DISTRIBUTION_STYLES_DIRECTORY):
+        for filename in files:
+            # Skip non-CSL files
+            if not filename.endswith(".csl"):
+                continue
+            abs_path = os.path.join(root, filename)
+            rel_path = os.path.relpath(abs_path, DISTRIBUTION_STYLES_DIRECTORY)
+            if rel_path in files_to_keep:
+                continue
+            print("Deleting {0}".format(rel_path))
+            os.unlink(abs_path)
+            count += 1
+    return count
+
 def push_changes(dry_run):
-    os.chdir(DISTRIBUTION_STYLES_DIRECTORY)
-
     write_readme_md()
 
-    os.system("git add -A")
+    execute_subprocess(git_cmd(DISTRIBUTION_STYLES_DIRECTORY, ["add", "-A"]), True)
 
-    os.system("git commit -a -m 'Synced up to https://github.com/citation-style-language/styles/commit/%s'" % (original_last_commit()))
+    execute_subprocess(git_cmd(DISTRIBUTION_STYLES_DIRECTORY, [
+        "commit",
+        "-a",
+        "-m",
+        "Synced up to https://github.com/citation-style-language/styles/commit/{0}".format(last_commit_hash())
+    ]), True)
 
-    styles_distribution_directory_count = count_styles_git_index(DISTRIBUTION_STYLES_DIRECTORY)
-    styles_directory_count = count_styles_git_index(ORIGINAL_STYLES_DIRECTORY)
+    original_styles_count = count_styles_git_index(ORIGINAL_STYLES_DIRECTORY)
+    distribution_styles_count = count_styles_git_index(DISTRIBUTION_STYLES_DIRECTORY)
 
-    if styles_distribution_directory_count == styles_directory_count and \
-                styles_distribution_directory_count > 6000:
-        print "Success"
-	if not dry_run:
-            os.system("git push")
-    else:
-        sys.stderr.write("styles_distribution_directory: %d\n" % (styles_distribution_directory_count))
-        sys.stderr.write("styles_directory: %d\n" % (styles_directory_count))
+    print("Original styles: {0}".format(original_styles_count))
+    print("Distribution styles: {0}".format(distribution_styles_count))
+
+    if original_styles_count != distribution_styles_count:
+        raise Exception("Style counts do not match!")
+
+    if distribution_styles_count < 6000:
+        raise Exception("Distribution repo has fewer than 6000 styles!")
+
+    if dry_run:
+        print("Dry run -- not pushing to distribution repo")
+        return
+
+    print("Pushing changes to distribution repo")
+    execute_subprocess(git_cmd(DISTRIBUTION_STYLES_DIRECTORY, ["push"]), True)
 
 def main(dry_run, commit):
-    lockfile = open("/tmp/csls.lock", "w")
-    fcntl.flock(lockfile, fcntl.LOCK_EX)
+    lock_file_path = "/tmp/csl-update.lock"
+    lock_file = open(lock_file_path, "w")
+    fcntl.flock(lock_file, fcntl.LOCK_EX)
 
-    os.chdir(ORIGINAL_STYLES_DIRECTORY)
-    execute_subprocess(["git","pull"])
-    execute_subprocess(["git", "checkout", commit])
+    execute_subprocess(git_cmd(ORIGINAL_STYLES_DIRECTORY, ["checkout", "master"]), True)
+    execute_subprocess(git_cmd(ORIGINAL_STYLES_DIRECTORY, ["pull"]), True)
+    execute_subprocess(git_cmd(ORIGINAL_STYLES_DIRECTORY, ["checkout", commit]), True)
 
-    delete_styles()
+    execute_subprocess(git_cmd(DISTRIBUTION_STYLES_DIRECTORY, ["checkout", "master"]), True)
+    execute_subprocess(git_cmd(DISTRIBUTION_STYLES_DIRECTORY, ["pull"]), True)
 
-    dependents_directory = os.path.join(DISTRIBUTION_STYLES_DIRECTORY, "dependent")
+    result = process_files()
+    num_deleted = prune_distribution_files(result["files_to_keep"])
 
-    if not os.path.exists(dependents_directory):
-        os.mkdir(dependents_directory)
-
-    files_to_change = prepare_files_to_change()
-
-    copy_and_update_styles(files_to_change)
+    print("Added: {0}".format(result["num_added"]))
+    print("Updated: {0}".format(result["num_updated"]))
+    print("Skipped: {0}".format(result["num_skipped"]))
+    print("Deleted: {0}".format(num_deleted))
 
     push_changes(dry_run)
+
+    lock_file.close()
+    os.unlink(lock_file_path)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Prepares and pushes style repository to be distributed.')
     parser.add_argument('--dry-run', action='store_true', help='Do everything except git push (default: %(default)s).', default=False)
-    parser.add_argument('--commit', default='HEAD', help='Which commit to checkout from --original_styles_directory option (default: %(default)s)')
+    parser.add_argument('--commit', default='HEAD', help='Which commit to checkout from --original_styles_directory (default: %(default)s)')
     parser.add_argument('--original-styles-directory', required=True, help='Directory with a git checkout of https://github.com/citation-style-language/styles')
     parser.add_argument('--distribution-styles-directory', required=True, help='Directory with a git checkout of the destination directory')
     args = vars(parser.parse_args())
