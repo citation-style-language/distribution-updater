@@ -1,0 +1,22 @@
+#!/bin/sh
+
+OWNER=`whoami`
+
+if [ $OWNER = "root" ]; then
+    echo "Cannot be run as root"
+    exit 1
+fi
+
+if [ ! -d .git ]; then
+    echo "Must be run from repo root"
+    exit 1
+fi
+
+OWNER=$OWNER:$OWNER
+BOT=cslbot:cslbot
+
+sudo chown -R $OWNER .git .gitmodules bin scripts
+sudo chown $OWNER styles
+# The styles submodules and their git metadata
+# need to be owned by the bot user
+sudo chown -R $BOT styles/* .git/modules/styles/*
