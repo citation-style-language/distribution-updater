@@ -5,14 +5,24 @@ import traceback
 import styles_distribution as updater
 
 def server(environ, start_response):
+    if environ.get("HTTP_AUTHORIZATION") == os.getenv("AUTHORIZATION"):
+        status = "200 OK"
+    else:
+        status = "400 Bad Request"
+
     data = "\n"
-    start_response("200 OK", [
+    environ["response_status"] = status
+
+    start_response(status, [
         ("Content-Type", "text/plain"),
         ("Content-Length", str(len(data)))
     ])
     return iter([data])
 
 def update_styles(environ):
+    if environ["response_status"][0:3] != "200":
+        return
+
     try:
         print("Updating styles")
 
@@ -49,11 +59,7 @@ class ExecuteOnCompletion:
         self.__application = application
         self.__callback = callback
     def __call__(self, environ, start_response):
-        try:
-            result = self.__application(environ, start_response)
-        except:
-            self.__callback(environ)
-            raise
+        result = self.__application(environ, start_response)
         return Generator(result, self.__callback, environ)
 
 sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0) # make stdout unbuffered
