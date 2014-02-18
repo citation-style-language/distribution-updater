@@ -1,4 +1,4 @@
-Citation Style Language distribution repo updater
+CSL styles-distribution updater
 ====================
 
 This is a WSGI app to update the [CSL styles distribution repo](https://github.com/citation-style-language/styles-distribution) based on a Travis CI webhook defined in the [main CSL styles repo](https://github.com/citation-style-language/styles).
