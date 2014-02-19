@@ -1,6 +1,7 @@
 from __future__ import print_function
 import os
 import sys
+import json
 import traceback
 import styles_distribution as updater
 
@@ -9,6 +10,14 @@ def server(environ, start_response):
         status = "200 OK"
     else:
         status = "400 Bad Request"
+
+    request_body_size = int(environ.get('CONTENT_LENGTH', 0))
+    request_body = environ['wsgi.input'].read(request_body_size)
+    if request_body:
+        commit_hash = json.loads(request_body)["commit"]
+    else:
+        commit_hash = "HEAD"
+    environ["commit_hash"] = commit_hash
 
     data = "\n"
     environ["response_status"] = status
@@ -24,14 +33,14 @@ def update_styles(environ):
         return
 
     try:
-        print("Updating styles")
+        print("Updating styles to {0}".format(environ["commit_hash"]))
 
         # Styles directories are in ../styles/
         styles_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, 'styles'))
         updater.ORIGINAL_STYLES_DIRECTORY = os.path.join(styles_dir, 'original')
         updater.DISTRIBUTION_STYLES_DIRECTORY = os.path.join(styles_dir, 'distribution')
 
-        updater.main(False, 'HEAD')
+        updater.main(False, environ["commit_hash"])
 
     except:
         traceback.print_exc()
