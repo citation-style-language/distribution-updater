@@ -4,6 +4,7 @@ import sys
 import json
 import traceback
 import styles_distribution as updater
+from cgi import parse_qs
 
 def server(environ, start_response):
     if environ.get("HTTP_AUTHORIZATION") == os.getenv("AUTHORIZATION"):
@@ -14,10 +15,13 @@ def server(environ, start_response):
     request_body_size = int(environ.get('CONTENT_LENGTH', 0))
     request_body = environ['wsgi.input'].read(request_body_size)
     if request_body:
-        commit_hash = json.loads(request_body)["commit"]
+        try:
+            payload = parse_qs(request_body)["payload"][0]
+            environ["commit_hash"] = json.loads(payload)["commit"]
+        except ValueError:
+            status = "400 Bad Request"
     else:
-        commit_hash = "HEAD"
-    environ["commit_hash"] = commit_hash
+        environ["commit_hash"] = "HEAD"
 
     data = "\n"
     environ["response_status"] = status
