@@ -86,7 +86,7 @@ def process_files():
                 continue
 
             # Skip non-CSL files
-            if not filename.endswith('.csl'):
+            if not filename.endswith('.csl') and filename != 'renamed-styles.json':
                 continue
 
             orig_abs_path = os.path.join(root, filename)
