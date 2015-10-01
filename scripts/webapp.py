@@ -16,12 +16,14 @@ def server(environ, start_response):
     request_body = environ['wsgi.input'].read(request_body_size)
     if request_body:
         try:
-            payload = parse_qs(request_body)["payload"][0]
-            environ["commit_hash"] = json.loads(payload)["commit"]
+            payload = json.loads(parse_qs(request_body)["payload"][0])
+            environ["commit_hash"] = payload["commit"]
+            environ["build_status"] = payload["status"]
         except ValueError:
             status = "400 Bad Request"
     else:
         environ["commit_hash"] = "HEAD"
+        environ["build_status"] = 0
 
     data = "\n"
     environ["response_status"] = status
@@ -33,7 +35,7 @@ def server(environ, start_response):
     return iter([data])
 
 def update_styles(environ):
-    if environ["response_status"][0:3] != "200":
+    if environ["response_status"][0:3] != "200" or environ["build_status"] != 0:
         return
 
     try:
