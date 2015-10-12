@@ -17,6 +17,7 @@ def server(environ, start_response):
     if request_body:
         try:
             payload = json.loads(parse_qs(request_body)["payload"][0])
+            environ["type"] = payload["type"]
             environ["commit_hash"] = payload["commit"]
             environ["build_status"] = payload["status"]
         except ValueError:
@@ -35,7 +36,9 @@ def server(environ, start_response):
     return iter([data])
 
 def update_styles(environ):
-    if environ["response_status"][0:3] != "200" or environ["build_status"] != 0:
+    if (environ["response_status"][0:3] != "200"
+            or environ["build_status"] != 0
+            or environ["type"] == "pull_request"):
         return
 
     try:
