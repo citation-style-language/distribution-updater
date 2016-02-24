@@ -20,6 +20,7 @@ def server(environ, start_response):
             environ["type"] = payload["type"]
             environ["commit_hash"] = payload["commit"]
             environ["build_status"] = payload["status"]
+            environ["branch"] = payload["branch"]
         except ValueError:
             status = "400 Bad Request"
     else:
@@ -38,6 +39,7 @@ def server(environ, start_response):
 def update_styles(environ):
     if (environ["response_status"][0:3] != "200"
             or environ["build_status"] != 0
+            or environ["branch"] != "master"
             or environ["type"] == "pull_request"):
         return
 
